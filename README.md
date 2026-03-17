@@ -17,3 +17,5 @@ python工具脚本加载器及工具集
 - 打包时使用以下指令打包
   ```
   pyinstaller --noconfirm --onefile --windowed --name=newUI -i icon.ico luncher9.py --add-data "icon.ico;." --add-data "python312.zip;." --add-data "uiqt0_2_3_3.py;main_script" --add-data "fonts;fonts" --add-data "resources;resources"```
+
+---
