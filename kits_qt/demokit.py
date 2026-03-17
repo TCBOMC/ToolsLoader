@@ -1,4 +1,4 @@
-class mathkit:
+class demokit:
     def __init__(self, main):
         self.main = main
         self.num_a = 123
