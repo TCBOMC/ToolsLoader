@@ -12,3 +12,8 @@ python工具脚本加载器及工具集
 - 批量字幕调轴
 
 ---
+# 打包与执行
+- 直接运行根目录下名称以uiqt开头的脚本以启动主程序
+- 打包时使用以下指令打包
+  ```
+  pyinstaller --noconfirm --onefile --windowed --name=newUI -i icon.ico luncher9.py --add-data "icon.ico;." --add-data "python312.zip;." --add-data "uiqt0_2_3_3.py;main_script" --add-data "fonts;fonts" --add-data "resources;resources"```
