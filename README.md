@@ -14,8 +14,8 @@ python工具脚本加载器及工具集
 ---
 # 打包与执行
 - 直接运行根目录下名称以uiqt开头的脚本以启动主程序
-- 打包时使用以下指令打包
+- 打包时使用以下指令打包（注意第3个add-data中脚本名称需要使用最新版主程序或指定的版本）
   ```
-  pyinstaller --noconfirm --onefile --windowed --name=newUI -i icon.ico luncher9.py --add-data "icon.ico;." --add-data "python312.zip;." --add-data "uiqt0_2_3_3.py;main_script" --add-data "fonts;fonts" --add-data "resources;resources"```
+  pyinstaller --noconfirm --onefile --windowed --name=newUI -i icon.ico luncher9.py --add-data "icon.ico;." --add-data "python312.zip;." --add-data "uiqt0_2_3_3.py;main_script" --add-data "fonts;fonts" --add-data "resources;resources"
 
 ---
