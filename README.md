@@ -18,5 +18,5 @@ python工具脚本加载器及工具集
 - 打包时使用以下指令打包（注意第3个add-data中脚本名称需要使用最新版主程序或指定的版本）
   ```
   pyinstaller --noconfirm --onefile --windowed --name=newUI -i icon.ico luncher9.py --add-data "icon.ico;." --add-data "python312.zip;." --add-data "uiqt0_2_3_3.py;main_script" --add-data "fonts;fonts" --add-data "resources;resources"
-- 程序支持热加载/修改脚本，程序启动后修改/新增kit/plugin脚本时仅需点击UI左上角的↻刷新按钮即可完成脚本的加载与重载
+- 程序支持热加载/修改脚本，程序启动后修改/新增kit/plugin脚本时仅需点击UI左上角的↻重载按钮即可完成脚本的加载与重载
 ---
