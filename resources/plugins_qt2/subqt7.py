@@ -13,6 +13,7 @@ import ctypes
 import numpy as np
 from fontTools.ttLib import TTFont, TTCollection
 from fontTools.ttLib.tables._n_a_m_e import NameRecord
+from fontTools.pens.t2CharStringPen import T2CharStringPen
 from pypinyin import lazy_pinyin
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QComboBox, QLabel, QCheckBox,
@@ -57,6 +58,8 @@ CHINESE_LANG_IDS = {0x0804, 0x0404}
 
 # CJK Unicode 范围
 CJK_PATTERN = re.compile(r'[\u4e00-\u9fff\u3400-\u4dbf]')
+
+_CID_RE = re.compile(r"^cid(\d{5,})$")
 
 # 新建中文名称记录时的目标平台
 # (platformID, platEncID, langID, [nameID列表])
@@ -2063,26 +2066,77 @@ class SubtitleExtractorApp(QObject):
             except:
                 pass
 
+    def _is_cid_font(self, font_path):
+        """CID-keyed CFF OTF 判定：CFF topdict 带 ROS（如 Adobe-Japan1-6）即为 CID 字体"""
+        try:
+            font = TTFont(font_path, lazy=True)
+            is_cid = ("CFF " in font and
+                      getattr(font["CFF "].cff.topDictIndex[0], "ROS", None) is not None)
+            font.close()
+            return is_cid
+        except Exception as e:
+            self.log(f"⚠️ CID 判定失败: {font_path} 错误: {e}")
+            return False
+
+    def _merge_cid_group(self, dst, font_files):
+        """
+        CID-keyed OTF 按 CID 取并集合并（纯 fontTools）。
+        以第一个字体为基准，其余子集中基准没有的 CID 字形通过
+        T2CharStringPen 反编译为扁平轮廓后并入，cmap/hmtx 取并集。
+        绕开 FontForge 对 CID 子集只加载部分字形的解析缺陷。
+        """
+        font = TTFont(font_files[0])
+        order = list(font.getGlyphOrder())
+        have_cids = {int(m.group(1)) for g in order
+                     for m in [_CID_RE.match(g)] if m}
+        added_total = 0
+        hmtx = font["hmtx"]
+        td = font["CFF "].cff.topDictIndex[0]
+        charstrings = td.CharStrings
+
+        for path in font_files[1:]:
+            other = TTFont(path)
+            o_cs = other["CFF "].cff.topDictIndex[0].CharStrings
+            added = 0
+            for gname in other.getGlyphOrder():
+                m = _CID_RE.match(gname)
+                if not m or int(m.group(1)) in have_cids or gname not in o_cs:
+                    continue
+                width, lsb = other["hmtx"][gname]
+                pen = T2CharStringPen(width, None)
+                o_cs[gname].draw(pen)
+                charstrings[gname] = pen.getCharString()
+                hmtx[gname] = (width, lsb)
+                order.append(gname)
+                have_cids.add(int(m.group(1)))
+                added += 1
+                added_total += 1
+            # cmap 取并集（拿到只在某集 cmap 里出现的映射）
+            o_cmap = other.getBestCmap()
+            for st in font["cmap"].tables:
+                if st.format in (4, 12):
+                    for cp, g in o_cmap.items():
+                        if cp not in st.cmap and g in charstrings:
+                            st.cmap[cp] = g
+            self.log(f"  + {os.path.basename(path)}: 新增 {added} 个字形")
+            other.close()
+
+        font.setGlyphOrder(order)
+        font["maxp"].numGlyphs = len(order)
+        # charset 列表须含 .notdef 且位于首位（GID0），仅在实际新增字形时重写
+        if added_total and hasattr(td, "charset") and isinstance(td.charset, list):
+            td.charset = list(order)
+        font.save(dst)
+        font.close()
+        self.log(f"✅ CID 合并完成: {os.path.basename(dst)} (共 {len(order)} 字形)")
+        return True
+
     def merge_fonts(self, workdir):
         """
         将 Fonts 子文件夹下的所有视频文件夹内的 TTF/OTF 字体合并到 Fonts 根目录。
+        CID-keyed OTF（日文商用字体）走 fontTools 合并，其余走 FontForge。
         """
-        if not self._find_fontforge_executable():
-            self.log("❌ FontForge不可用，无法进行字体合并")
-            return
-
         fonts_root = workdir
-        # 清空根目录残留字体
-        for file in os.listdir(fonts_root):
-            file_path = os.path.join(fonts_root, file)
-            if os.path.isfile(file_path):
-                _, ext = os.path.splitext(file)
-                if ext.lower() in [".ttf", ".otf"]:
-                    try:
-                        os.remove(file_path)
-                        self.log(f"🗑 已删除残留字体文件: {file}")
-                    except Exception as e:
-                        self.log(f"❌ 删除文件失败: {file} 错误: {e}")
 
         font_groups = {}
         for subdir in os.listdir(workdir):
@@ -2098,6 +2152,27 @@ class SubtitleExtractorApp(QObject):
                     continue
                 base_name = os.path.splitext(file)[0]
                 font_groups.setdefault(base_name, []).append(file_path)
+
+        # 只有存在需要 FontForge 合并的组（多文件且非 CID）时才要求 FontForge
+        need_ff = any(
+            len(files) > 1 and not self._is_cid_font(files[0])
+            for files in font_groups.values()
+        )
+        if need_ff and not self._find_fontforge_executable():
+            self.log("❌ FontForge不可用，无法进行字体合并")
+            return
+
+        # 清空根目录残留字体
+        for file in os.listdir(fonts_root):
+            file_path = os.path.join(fonts_root, file)
+            if os.path.isfile(file_path):
+                _, ext = os.path.splitext(file)
+                if ext.lower() in [".ttf", ".otf"]:
+                    try:
+                        os.remove(file_path)
+                        self.log(f"🗑 已删除残留字体文件: {file}")
+                    except Exception as e:
+                        self.log(f"❌ 删除文件失败: {file} 错误: {e}")
 
         success_count = 0
         total_count = len(font_groups)
@@ -2137,8 +2212,14 @@ class SubtitleExtractorApp(QObject):
                         dst = os.path.join(fonts_root, f"{base_name}_{i}{ext}")
                         i += 1
 
-                    merge_script = self._create_fontforge_merge_script(font_files, dst)
-                    if self._run_fontforge_script(merge_script):
+                    # CID-keyed OTF（A-OTF/VDL 等日文商用字体）按 CID 合并，不走 FontForge
+                    if self._is_cid_font(font_files[0]):
+                        merged_ok = self._merge_cid_group(dst, font_files)
+                    else:
+                        merge_script = self._create_fontforge_merge_script(font_files, dst)
+                        merged_ok = self._run_fontforge_script(merge_script)
+
+                    if merged_ok:
                         font_basename = os.path.basename(font_files[0])
                         name_records = self.font_name_registry.get(font_basename, {})
                         if name_records:
