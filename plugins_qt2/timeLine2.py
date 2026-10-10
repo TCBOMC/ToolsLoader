@@ -71,7 +71,12 @@ class OffsetTimelineApp:
         self.type_combo.addItems(["ass", "ssa", "srt"])
 
         # 偏移时间输入 - 使用 QTimeEdit
-        time_label = QLabel("偏移时间:")
+        time_label = QLabel("偏移:")
+
+        # 偏移范围选择
+        self.offset_mode_combo = QComboBox()
+        self.offset_mode_combo.addItems(["整体", "开头", "结尾"])
+        self.offset_mode_combo.setCurrentText("整体")
 
         # 正负号切换按钮
         self.time_sign_btn = QPushButton("+")
@@ -109,11 +114,34 @@ class OffsetTimelineApp:
         time_layout.addWidget(self.time_sign_btn)
         time_layout.addWidget(self.time_input)
 
+        # 时间变化时更新 Tooltip
+        self.time_input.timeChanged.connect(lambda _: self.update_offset_tooltip())
+      
+        # 正负号变化后更新 Tooltip
+        # 此连接放在 on_sign_btn_clicked 后面，因此会先更新按钮文字，再更新 Tooltip
+        self.time_sign_btn.clicked.connect(lambda _: self.update_offset_tooltip())
+      
+        # 初始化 Tooltip
+        self.update_offset_tooltip()
+
         # 添加到左侧布局
-        control_layout.addWidget(type_label)
-        control_layout.addWidget(self.type_combo)
+        type_layout = QHBoxLayout()
+        type_layout.setContentsMargins(0, 0, 0, 0)
+        type_layout.setSpacing(0)
+        type_layout.addWidget(type_label)
+        type_layout.addWidget(self.type_combo)
+        
+        control_layout.addLayout(type_layout)
         #control_layout.addSpacing(20)
-        control_layout.addWidget(time_label)
+        offset_layout = QHBoxLayout()
+        offset_layout.setContentsMargins(0, 0, 0, 0)
+        offset_layout.setSpacing(0)
+        offset_layout.addWidget(time_label)
+        offset_layout.addWidget(self.offset_mode_combo)
+        
+        control_layout.addLayout(offset_layout)
+        #control_layout.addWidget(time_label)
+        #control_layout.addWidget(self.offset_mode_combo)
         control_layout.addLayout(time_layout)
 
         # 添加弹性空间
@@ -124,18 +152,26 @@ class OffsetTimelineApp:
         ass_options_layout = QHBoxLayout(self.ass_options_container)
         ass_options_layout.setContentsMargins(0, 0, 0, 0)
         #ass_options_layout.setSpacing(15)
+        
+        # 样式标签 + 输入框
+        style_layout = QHBoxLayout()
+        style_layout.setContentsMargins(0, 0, 0, 0)
+        style_layout.setSpacing(0)
 
         # 样式输入框
         style_label = QLabel("样式:")
         self.style_input = QLineEdit()
-        self.style_input.setPlaceholderText("为空时偏移所有样式")
+        self.style_input.setPlaceholderText("为空时偏移所有样式(逗号分隔)")
         self.style_input.setMinimumWidth(int(45 * self.scale))
 
         # "包含Comment"复选框
         self.include_comment_check = QCheckBox("包含Comment")
 
-        ass_options_layout.addWidget(style_label)
-        ass_options_layout.addWidget(self.style_input)
+        style_layout.addWidget(style_label)
+        style_layout.addWidget(self.style_input)
+        ass_options_layout.addLayout(style_layout)
+        #ass_options_layout.addWidget(style_label)
+        #ass_options_layout.addWidget(self.style_input)
         ass_options_layout.addWidget(self.include_comment_check)
 
         # 添加到控制布局
@@ -178,6 +214,52 @@ class OffsetTimelineApp:
 
         # 初始化ASS/SSA选项的可见性
         self.on_type_changed(self.type_combo.currentText())
+        
+    # 更新偏移量 Tooltip
+    def update_offset_tooltip(self):
+        qtime = self.time_input.time()
+
+        hours = qtime.hour()
+        minutes = qtime.minute()
+        seconds = qtime.second()
+        milliseconds = qtime.msec()
+
+        total_ms = (
+            (hours * 3600 + minutes * 60 + seconds) * 1000
+            + milliseconds
+        )
+
+        # 根据正负号按钮状态决定方向
+        if self.time_sign_btn.isChecked():
+            direction = "超前"
+        else:
+            direction = "滞后"
+
+        # 转换为便于阅读的格式
+        total_seconds = total_ms / 1000
+
+        parts = []
+
+        if hours > 0:
+            parts.append(f"{hours}h")
+
+        if minutes > 0:
+            parts.append(f"{minutes}m")
+
+        # 秒部分：
+        # 有毫秒时保留小数，例如 2.1s
+        # 没有毫秒时显示整数，例如 2s
+        if seconds > 0 or milliseconds > 0 or total_ms == 0:
+            if milliseconds > 0:
+                second_value = seconds + milliseconds / 1000
+                parts.append(f"{second_value:g}s")
+            else:
+                parts.append(f"{seconds}s")
+
+        tooltip = f"{direction}{''.join(parts)}"
+
+        self.time_sign_btn.setToolTip(tooltip)
+        self.time_input.setToolTip(tooltip)
 
     def on_type_changed(self, text):
         """字幕类型改变时的处理"""
@@ -235,99 +317,116 @@ class OffsetTimelineApp:
 
         return f"{hours:02d}:{minutes:02d}:{seconds:02d}.{milliseconds:03d}"
 
-    def process_ass_file(self, file_path, offset_ms, include_comment, target_styles):
+    def process_ass_file(self, file_path, offset_ms, include_comment, target_styles, offset_mode):
         """处理ASS/SSA文件"""
         try:
             with open(file_path, 'r', encoding='utf-8-sig') as f:
                 content = f.read()
-
+        
             lines = content.split('\n')
             in_events_section = False
             modified_lines = []
-
+        
             for line in lines:
                 # 检查是否进入[Events]部分
                 if line.strip().lower() == '[events]':
                     in_events_section = True
                     modified_lines.append(line)
                     continue
-
+        
                 # 检查是否离开[Events]部分
                 if in_events_section and line.strip().startswith('['):
                     in_events_section = False
-
+        
                 # 处理[Events]部分中的时间轴
                 if in_events_section and (line.strip().startswith('Dialogue:') or line.strip().startswith('Comment:')):
                     parts = line.split(',', maxsplit=9)
-
+        
                     if len(parts) >= 10:
                         event_type = parts[0].strip()
-
+        
                         # 检查是否为Comment类型且是否包含Comment
                         if event_type.startswith('Comment:') and not include_comment:
                             modified_lines.append(line)
                             continue
-
-                        # 检查样式是否在目标样式中（如果指定了目标样式）
+        
+                        # 检查样式是否在目标样式中
                         style = parts[3].strip()
                         if target_styles and style not in target_styles:
                             modified_lines.append(line)
                             continue
-
+        
                         # 解析和修改时间
                         start_time = parts[1].strip()
                         end_time = parts[2].strip()
-
-                        # 解析ASS/SSA时间（秒精确到2位，格式：H:MM:SS.cc）
+        
+                        # 解析ASS/SSA时间
                         def parse_ass_time(t):
                             hh, mm, ss_ms = t.split(':')
-                            # 处理秒和小数秒部分
                             if '.' in ss_ms:
-                                ss, cs = ss_ms.split('.')  # cs是百分秒
-                                # 如果小数部分有3位（来自offset_ms），只取前2位
+                                ss, cs = ss_ms.split('.')
                                 if len(cs) > 2:
                                     cs = cs[:2]
                                 elif len(cs) == 1:
                                     cs = cs + '0'
-                                milliseconds = int(cs) * 10  # 百分秒转毫秒
+                                milliseconds = int(cs) * 10
                             else:
                                 ss = ss_ms
                                 milliseconds = 0
-
-                            return timedelta(hours=int(hh), minutes=int(mm),
-                                             seconds=int(ss), milliseconds=milliseconds)
-
-                        # 格式化时间为ASS/SSA格式（秒精确到2位）
+        
+                            return timedelta(
+                                hours=int(hh),
+                                minutes=int(mm),
+                                seconds=int(ss),
+                                milliseconds=milliseconds
+                            )
+        
+                        # 格式化ASS/SSA时间
                         def format_ass_time(td):
                             total_seconds = td.total_seconds()
                             hours = int(total_seconds // 3600)
                             minutes = int((total_seconds % 3600) // 60)
                             seconds = int(total_seconds % 60)
-                            centiseconds = int((td.microseconds // 10000) % 100)  # 百分秒
-
-                            # 格式化：H:MM:SS.cc
+                            centiseconds = int((td.microseconds // 10000) % 100)
+        
                             return f"{hours}:{minutes:02d}:{seconds:02d}.{centiseconds:02d}"
-
+        
                         try:
                             start_td = parse_ass_time(start_time)
                             end_td = parse_ass_time(end_time)
-
+        
                             # 应用偏移
                             offset_td = timedelta(milliseconds=offset_ms)
-                            new_start_td = start_td + offset_td
-                            new_end_td = end_td + offset_td
-
+        
+                            if offset_mode == "整体":
+                                new_start_td = start_td + offset_td
+                                new_end_td = end_td + offset_td
+        
+                            elif offset_mode == "开头":
+                                new_start_td = start_td + offset_td
+                                new_end_td = end_td
+        
+                            elif offset_mode == "结尾":
+                                new_start_td = start_td
+                                new_end_td = end_td + offset_td
+        
+                            else:
+                                new_start_td = start_td + offset_td
+                                new_end_td = end_td + offset_td
+        
                             # 确保时间不为负
                             if new_start_td.total_seconds() < 0:
                                 new_start_td = timedelta(0)
+        
                             if new_end_td.total_seconds() < 0:
                                 new_end_td = timedelta(milliseconds=100)
-
+        
                             parts[1] = format_ass_time(new_start_td)
                             parts[2] = format_ass_time(new_end_td)
-
+        
                             modified_line = ','.join(parts)
                             modified_lines.append(modified_line)
+        
                         except Exception as e:
                             print(f"时间解析错误: {e}, 原始行: {line}")
                             modified_lines.append(line)
@@ -335,78 +434,101 @@ class OffsetTimelineApp:
                         modified_lines.append(line)
                 else:
                     modified_lines.append(line)
-
+        
             # 写回文件
             with open(file_path, 'w', encoding='utf-8-sig') as f:
                 f.write('\n'.join(modified_lines))
-
+        
             return True, f"成功处理: {os.path.basename(file_path)}"
-
+        
         except Exception as e:
             return False, f"处理失败 {os.path.basename(file_path)}: {str(e)}"
 
-    def process_srt_file(self, file_path, offset_ms):
+    def process_srt_file(self, file_path, offset_ms, offset_mode):
         """处理SRT文件"""
         try:
             with open(file_path, 'r', encoding='utf-8-sig') as f:
                 content = f.read()
-
+        
             lines = content.split('\n')
             modified_lines = []
             i = 0
-
+        
             while i < len(lines):
                 line = lines[i].strip()
-
+        
                 # 检查是否为时间轴行
                 if '-->' in line:
                     try:
                         # 解析时间轴
                         start_str, end_str = line.split(' --> ')
-
+        
                         # 解析SRT时间格式
                         def parse_srt_time(t):
                             hh, mm, ss_ms = t.split(':')
                             ss, ms = ss_ms.split(',')
-                            return timedelta(hours=int(hh), minutes=int(mm),
-                                             seconds=int(ss), milliseconds=int(ms))
-
+                            return timedelta(
+                                hours=int(hh),
+                                minutes=int(mm),
+                                seconds=int(ss),
+                                milliseconds=int(ms)
+                            )
+        
                         def format_srt_time(td):
                             hours = td.seconds // 3600 + td.days * 24
                             minutes = (td.seconds % 3600) // 60
                             seconds = td.seconds % 60
                             milliseconds = td.microseconds // 1000
                             return f"{hours:02d}:{minutes:02d}:{seconds:02d},{milliseconds:03d}"
-
+        
                         start_td = parse_srt_time(start_str.strip())
                         end_td = parse_srt_time(end_str.strip())
-
+        
                         # 应用偏移
                         offset_td = timedelta(milliseconds=offset_ms)
-                        new_start_td = start_td + offset_td
-                        new_end_td = end_td + offset_td
-
+        
+                        if offset_mode == "整体":
+                            new_start_td = start_td + offset_td
+                            new_end_td = end_td + offset_td
+        
+                        elif offset_mode == "开头":
+                            new_start_td = start_td + offset_td
+                            new_end_td = end_td
+        
+                        elif offset_mode == "结尾":
+                            new_start_td = start_td
+                            new_end_td = end_td + offset_td
+        
+                        else:
+                            new_start_td = start_td + offset_td
+                            new_end_td = end_td + offset_td
+        
                         # 确保时间不为负
                         if new_start_td.total_seconds() < 0:
                             new_start_td = timedelta(0)
+        
                         if new_end_td.total_seconds() < 0:
                             new_end_td = timedelta(milliseconds=100)
-
-                        new_line = f"{format_srt_time(new_start_td)} --> {format_srt_time(new_end_td)}"
+        
+                        new_line = (
+                            f"{format_srt_time(new_start_td)} --> "
+                            f"{format_srt_time(new_end_td)}"
+                        )
                         modified_lines.append(new_line)
+        
                     except Exception as e:
                         modified_lines.append(line)
                 else:
                     modified_lines.append(lines[i])
-
+        
                 i += 1
-
+        
             # 写回文件
             with open(file_path, 'w', encoding='utf-8-sig') as f:
                 f.write('\n'.join(modified_lines))
-
+        
             return True, f"成功处理: {os.path.basename(file_path)}"
-
+        
         except Exception as e:
             return False, f"处理失败 {os.path.basename(file_path)}: {str(e)}"
 
@@ -415,23 +537,24 @@ class OffsetTimelineApp:
         # 获取输入值
         subtitle_type = self.type_combo.currentText()
         time_str = self.time_input.text().strip()
-
+        offset_mode = self.offset_mode_combo.currentText()
+        
         # 验证时间输入
         if not time_str:
             self.show_message("错误", "请输入偏移时间")
             return
-
+        
         try:
             offset_ms = self.parse_time_string(time_str)
         except ValueError as e:
             self.show_message("错误", f"时间格式错误: {str(e)}")
             return
-
+        
         # 获取要处理的文件
         if not self.tree_files:
             self.show_message("错误", "没有找到要处理的文件")
             return
-
+        
         # 获取选中的文件（根据checked字段）
         selected_files = []
         for file_info in self.tree_files:
@@ -439,71 +562,82 @@ class OffsetTimelineApp:
                 file_path = file_info.get('fullpath', '') or file_info.get('path', '')
                 if file_path and os.path.exists(file_path):
                     selected_files.append(file_path)
-
+        
         if not selected_files:
             self.show_message("错误", "没有选中要处理的文件")
             return
-
+        
         # 处理每个文件
         success_count = 0
         fail_count = 0
         messages = []
-
+        
         # 撤销记录数据
         operation_data = []
-
+        
         for file_path in selected_files:
             if not os.path.exists(file_path):
                 messages.append(f"文件不存在: {os.path.basename(file_path)}")
                 fail_count += 1
                 continue
-
+        
             # 根据文件后缀名和选择的类型确定处理方式
             file_ext = os.path.splitext(file_path)[1].lower().lstrip('.')
-
+        
             # 如果文件扩展名与选择的类型不匹配，跳过或按文件扩展名处理
             actual_type = file_ext if file_ext in ['ass', 'ssa', 'srt'] else subtitle_type
-
+        
             try:
                 # 读取原始内容
                 with open(file_path, "r", encoding="utf-8-sig") as f:
                     old_content = f.read()
-
+        
                 # 根据文件类型调用相应的处理函数
                 if actual_type in ['ass', 'ssa']:
                     include_comment = self.include_comment_check.isChecked()
                     style_filter = self.style_input.text().strip()
-                    target_styles = [s.strip() for s in style_filter.split(',')] if style_filter else []
-
-                    success, message = self.process_ass_file(file_path, offset_ms,
-                                                             include_comment, target_styles)
+                    target_styles = [
+                        s.strip() for s in style_filter.split(',')
+                    ] if style_filter else []
+        
+                    success, message = self.process_ass_file(
+                        file_path,
+                        offset_ms,
+                        include_comment,
+                        target_styles,
+                        offset_mode
+                    )
                 else:  # srt
-                    success, message = self.process_srt_file(file_path, offset_ms)
-
+                    success, message = self.process_srt_file(
+                        file_path,
+                        offset_ms,
+                        offset_mode
+                    )
+        
                 if success:
                     # 读取新内容
                     with open(file_path, "r", encoding="utf-8-sig") as f:
                         new_content = f.read()
-
+        
                     # 记录撤销信息
                     operation_data.append({
                         "fullpath": file_path,
                         "old_content": old_content,
                         "new_content": new_content
                     })
-
+        
                     success_count += 1
                 else:
                     fail_count += 1
-
+        
                 messages.append(message)
-
+        
             except Exception as e:
                 error_msg = f"处理失败 {os.path.basename(file_path)}: {str(e)}"
                 messages.append(error_msg)
                 fail_count += 1
-                print(f"处理异常: {error_msg}")  # 调试输出
-
+                print(f"处理异常: {error_msg}")
+        
         # ===== 注册历史记录（只注册一次）=====
         if operation_data:
             self.register_operation(
@@ -511,17 +645,20 @@ class OffsetTimelineApp:
                 operation_data,
                 new_transaction=True
             )
-
+        
         # 显示结果
         result_msg = f"处理完成!\n成功: {success_count} 个文件\n失败: {fail_count} 个文件"
-
+        
         if messages:
             # 显示最后几条消息（避免消息过长）
             display_count = min(10, len(messages))
-            result_msg += f"\n\n最后{display_count}条处理信息:\n" + "\n".join(messages[-display_count:])
-
+            result_msg += (
+                f"\n\n最后{display_count}条处理信息:\n"
+                + "\n".join(messages[-display_count:])
+            )
+        
         self.show_message("结果", result_msg)
-
+        
         # 调试输出，帮助定位问题
         print(f"选中文件数: {len(selected_files)}")
         print(f"成功: {success_count}, 失败: {fail_count}")
