@@ -38,7 +38,7 @@ DEFAULT_CONFIG = {
             "3位数字序号换行": {
                 "Regular_expression": "",
                 "Replacement_expression": "",
-                "Full_name": "{num001} {self}\\\n"
+                "Full_name": "{num001} {self}\\n"
             },
             "中文数字序号换行": {
                 "Regular_expression": "",
@@ -447,21 +447,61 @@ class ClipboardApp:
         full_name = mode_cfg.get("Full_name", "{self}\n")
 
         # 获取正则表达式配置
-        regular_expr = mode_cfg.get("Regular_expression")
-        replacement_expr = mode_cfg.get("Replacement_expression")
+        regular_expr = mode_cfg.get("Regular_expression") or ""
+        replacement_expr = mode_cfg.get("Replacement_expression") or ""
 
         formatted_lines = []
         for idx, text in enumerate(selected, start=1):
+            # 允许在正则/替换表达式里插入 {num...} / {num一} / {date:...}
+            row_regular_expr = self._fill_placeholders(regular_expr, idx) if regular_expr else regular_expr
+            row_replacement_expr = self._fill_placeholders(replacement_expr,
+                                                           idx) if replacement_expr else replacement_expr
+
             # 先应用正则表达式替换
-            if regular_expr and replacement_expr:
-                # regular_expr = bytes(regular_expr, "utf-8").decode("unicode_escape")
-                # replacement_expr = bytes(replacement_expr, "utf-8").decode("unicode_escape")
-                text = self.apply_regex_replacement(text, regular_expr, replacement_expr)
+            if row_regular_expr and row_replacement_expr:
+                text = self.apply_regex_replacement(text, row_regular_expr, row_replacement_expr)
 
             # 再格式化最终文本
             formatted_lines.append(self.format_line(idx, text, full_name))
 
         return "".join(formatted_lines)
+
+    def _fill_placeholders(self, s, num):
+        """
+        把表达式里的 {num...} / {num一} / {date:...} 替换成实际值。
+        不处理 {self}，也不处理 \\n/\\t 等转义（那是 format_line 的事）。
+        供正则/替换表达式和 format_line 共用。
+        """
+        if not s:
+            return s
+
+        def format_num(num, placeholder):
+            zeros = placeholder.count("0")
+            return str(num) if zeros == 0 else f"{num:0{zeros + 1}d}"
+
+        def format_date(match):
+            fmt = match.group(1)
+            if fmt:
+                fmt = fmt[1:]  # 去掉冒号
+            else:
+                fmt = "%Y-%m-%d"
+            return datetime.now().strftime(fmt)
+
+        result = s
+
+        # {num一} → 中文数字
+        if "{num一}" in result:
+            result = result.replace("{num一}", self.int_to_chinese(num))
+
+        # {num...} → 自动格式化数字
+        num_pattern = r"\{num0*(1)?\}"
+        result = re.sub(num_pattern, lambda m: format_num(num, m.group(0)), result)
+
+        # {date[:格式]} → 当前日期/时间
+        date_pattern = r"\{date(:[^}]*)?\}"
+        result = re.sub(date_pattern, format_date, result)
+
+        return result
 
     def apply_regex_replacement(self, text, pattern, replacement):
         """
@@ -482,40 +522,6 @@ class ClipboardApp:
     def format_line(self, num, text, full_name):
         """格式化单行文本"""
 
-        # --- 工具函数 ------------------------------------------------------------
-        def format_num(num, placeholder):
-            zeros = placeholder.count("0")
-            return str(num) if zeros == 0 else f"{num:0{zeros + 1}d}"
-
-        def format_date(match):
-            fmt = match.group(1)
-            if fmt:
-                fmt = fmt[1:]  # 去掉冒号
-            else:
-                fmt = "%Y-%m-%d"
-            return datetime.now().strftime(fmt)
-
-        def safe_literal_unescape(s: str) -> str:
-            """
-            智能逆转义字符串（支持 \\n, \\t, \\uXXXX 等），兼容字符串里同时包含单引号和双引号。
-            优先用 json.loads 解析（包装为 JSON 字符串），失败时回退到 unicode_escape。
-            """
-            if not isinstance(s, str):
-                return s
-
-            # 1) 优先：用 json.loads 解析 — 将 s 当作 JSON 字符串，先转义反斜杠和双引号
-            try:
-                # 先把反斜杠和双引号转义，构造合法的 JSON 字符串
-                esc = s.replace('\\', '\\\\').replace('"', '\\"')
-                return json.loads('"' + esc + '"')
-            except Exception:
-                # 2) 回退：尝试 unicode_escape 解码（能处理 \uXXXX、\n、\t 等）
-                try:
-                    return bytes(s, "utf-8").decode("unicode_escape")
-                except Exception:
-                    # 3) 最后保底：原样返回（避免抛错）
-                    return s
-
         def unescape_basic(s: str) -> str:
             escape_dict = {
                 '\\\\': '\\',
@@ -523,32 +529,17 @@ class ClipboardApp:
                 '\\r': '\r',
                 '\\t': '\t'
             }
-            # 用 re.escape 确保 pattern 和字典 key 完全一致
             pattern = re.compile('|'.join(re.escape(k) for k in escape_dict.keys()))
             return pattern.sub(lambda m: escape_dict[m.group(0)], s)
 
-        # -------------------------------------------------------------------------
-        # result = full_name.replace("\\n", "\n").replace("\\t", "\t").replace("\\r", "\r")
-        # result = ast.literal_eval(f"'{full_name}'")
-        # result = safe_literal_unescape(full_name)
         result = unescape_basic(full_name)
-        # result = full_name
 
         # {self} → 文本
         if "{self}" in result:
             result = result.replace("{self}", text)
 
-        # {num一} → 中文数字
-        if "{num一}" in result:
-            result = result.replace("{num一}", self.int_to_chinese(num))
-
-        # {num...} → 自动格式化数字
-        num_pattern = r"\{num0*(1)?\}"
-        result = re.sub(num_pattern, lambda m: format_num(num, m.group(0)), result)
-
-        # {date[:格式]} → 当前日期/时间
-        date_pattern = r"\{date(:[^}]*)?\}"
-        result = re.sub(date_pattern, format_date, result)
+        # {num...} / {num一} / {date:...}
+        result = self._fill_placeholders(result, num)
 
         return result
 
@@ -596,14 +587,39 @@ class ClipboardApp:
         top_layout.addLayout(btn_layout)
 
         # ---------- 下方编辑区 ----------
-        reg_label = QLabel("Regular_expression:")
+        reg_label = QLabel("正则匹配:")
         reg_entry = QLineEdit()
+        reg_entry.setToolTip(
+            "<b>可用占位符：</b><br>"
+            "<b>{idx}</b> / <b>{idx一}</b> / <b>{idx01}</b> — 轨道索引（idx 为无补零序号，"
+            "一 为中文序号，补零 1 为补零序号）<br>"
+            "<b>{index}</b> / <b>{index一}</b> / <b>{index01}</b> — 轨道索引"
+            "（与 idx 相同的模板，格式一致）<br>"
+            "<b>{date:%Y%m%d}</b> — 当前日期（冒号后为 strftime 格式，省略则默认 %Y-%m-%d）"
+        )
 
-        rep_label = QLabel("Replacement_expression:")
+        rep_label = QLabel("正则替换:")
         rep_entry = QLineEdit()
+        rep_entry.setToolTip(
+            "<b>可用占位符：</b><br>"
+            "<b>{idx}</b> / <b>{idx一}</b> / <b>{idx01}</b> — 轨道索引（idx 为无补零序号，"
+            "一 为中文序号，补零 1 为补零序号）<br>"
+            "<b>{index}</b> / <b>{index一}</b> / <b>{index01}</b> — 轨道索引"
+            "（与 idx 相同的模板，格式一致）<br>"
+            "<b>{date:%Y%m%d}</b> — 当前日期（冒号后为 strftime 格式，省略则默认 %Y-%m-%d）"
+        )
 
-        full_label = QLabel("Full_name:")
+        full_label = QLabel("命名模板:")
         full_entry = QLineEdit()
+        full_entry.setToolTip(
+            "<b>可用占位符：</b><br>"
+            "<b>{self}</b> — 正则替换后的文件名（不含扩展名）<br>"
+            "<b>{idx}</b> / <b>{idx一}</b> / <b>{idx01}</b> — 轨道索引（idx 为无补零序号，"
+            "一 为中文序号，补零 1 为补零序号）<br>"
+            "<b>{index}</b> / <b>{index一}</b> / <b>{index01}</b> — 轨道索引"
+            "（与 idx 相同的模板，格式一致）<br>"
+            "<b>{date:%Y%m%d}</b> — 当前日期（冒号后为 strftime 格式，省略则默认 %Y-%m-%d）"
+        )
 
         main_layout = QVBoxLayout()
         main_layout.addLayout(top_layout)
@@ -643,7 +659,7 @@ class ClipboardApp:
                 rep_entry.setText(cfg.get("Replacement_expression", ""))
                 full_entry.setText(cfg.get("Full_name", ""))
 
-        mode_combobox.currentTextChanged.connect(lambda _: load_selected_config())
+        mode_combobox.activated[str].connect(lambda _: load_selected_config())
 
         # ---------- 保存逻辑 ----------
         def save_config():
