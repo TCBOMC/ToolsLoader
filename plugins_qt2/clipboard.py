@@ -591,10 +591,8 @@ class ClipboardApp:
         reg_entry = QLineEdit()
         reg_entry.setToolTip(
             "<b>可用占位符：</b><br>"
-            "<b>{idx}</b> / <b>{idx一}</b> / <b>{idx01}</b> — 轨道索引（idx 为无补零序号，"
+            "<b>{num}</b> / <b>{num一}</b> / <b>{num01}</b> — 列表索引（num 为无补零序号，"
             "一 为中文序号，补零 1 为补零序号）<br>"
-            "<b>{index}</b> / <b>{index一}</b> / <b>{index01}</b> — 轨道索引"
-            "（与 idx 相同的模板，格式一致）<br>"
             "<b>{date:%Y%m%d}</b> — 当前日期（冒号后为 strftime 格式，省略则默认 %Y-%m-%d）"
         )
 
@@ -602,10 +600,8 @@ class ClipboardApp:
         rep_entry = QLineEdit()
         rep_entry.setToolTip(
             "<b>可用占位符：</b><br>"
-            "<b>{idx}</b> / <b>{idx一}</b> / <b>{idx01}</b> — 轨道索引（idx 为无补零序号，"
+            "<b>{num}</b> / <b>{num一}</b> / <b>{num01}</b> — 列表索引（num 为无补零序号，"
             "一 为中文序号，补零 1 为补零序号）<br>"
-            "<b>{index}</b> / <b>{index一}</b> / <b>{index01}</b> — 轨道索引"
-            "（与 idx 相同的模板，格式一致）<br>"
             "<b>{date:%Y%m%d}</b> — 当前日期（冒号后为 strftime 格式，省略则默认 %Y-%m-%d）"
         )
 
@@ -614,10 +610,8 @@ class ClipboardApp:
         full_entry.setToolTip(
             "<b>可用占位符：</b><br>"
             "<b>{self}</b> — 正则替换后的文件名（不含扩展名）<br>"
-            "<b>{idx}</b> / <b>{idx一}</b> / <b>{idx01}</b> — 轨道索引（idx 为无补零序号，"
+            "<b>{num}</b> / <b>{num一}</b> / <b>{num01}</b> — 列表索引（num 为无补零序号，"
             "一 为中文序号，补零 1 为补零序号）<br>"
-            "<b>{index}</b> / <b>{index一}</b> / <b>{index01}</b> — 轨道索引"
-            "（与 idx 相同的模板，格式一致）<br>"
             "<b>{date:%Y%m%d}</b> — 当前日期（冒号后为 strftime 格式，省略则默认 %Y-%m-%d）"
         )
 
